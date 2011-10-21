@@ -87,6 +87,7 @@
 use XML::Simple;
 use Sys::Virt;
 use Getopt::Long;
+use File::Which qw(which);
 
 # Set umask
 umask(022);
@@ -106,8 +107,8 @@ $opts{keeplock} = 0;
 $opts{snapshot} = 1;
 $opts{connect} = "qemu:///system";
 $opts{compress} = 'none';
-$opts{lvcreate} = '/usr/sbin/lvcreate';
-$opts{lvremove} = '/usr/sbin/lvremove';
+$opts{lvcreate} = which('lvcreate') || die "Can't find lvcreate\n";
+$opts{lvremove} = which('lvremove') || die "Can't find lvremove\n";
 $opts{nice} = 'nice -n 19';
 $opts{ionice} = 'ionice -c 2 -n 7';
 $opts{livebackup} = 1;
@@ -132,6 +133,9 @@ GetOptions(
     "bs=s"         => \$opts{bs},
     "help"         => \$opts{help}
 );
+
+print $opts{lvcreate};
+exit;
 
 # Set compression settings
 if ($opts{compress} eq 'lzop'){
