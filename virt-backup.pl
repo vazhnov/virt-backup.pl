@@ -1,5 +1,7 @@
 #!/usr/bin/perl -w
- 
+
+# https://github.com/vazhnov/virt-backup.pl
+
 # AUTHOR
 #   Daniel Berteaud <daniel@firewall-services.com>
 #
@@ -19,22 +21,21 @@
 #   You should have received a copy of the GNU General Public License
 #   along with this program; if not, write to the Free Software
 #   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- 
- 
- 
+
+
 # This script allows you to backup Virtual Machines managed by libvirt.
 # It has only be tested with KVM based VM
 # This script will dump:
 # * each block devices
 # * optionnally the memory (if --state flag is given)
 # * the XML description of the VM
- 
+
 # These files are writen in a temporary backup dir. Everything is done
 # in order to minimize donwtime of the guest. For example, it takes
 # a snapshot of the block devices (if backed with LVM) so the guest is
 # just paused for a couple of seconds. Once this is done, the guest is
 # resumed, and the script starts to dump the snapshot.
- 
+
 # Once a backup is finished, you'll have several files in the backup
 # directory. Let's take an example with a VM called my_vm which has
 # two virtual disks: hda and hdb. You have passed the --state flag:
@@ -43,63 +44,58 @@
 # * my_vm_hda.img: this file is an image of the hda drive of the guest
 # * my_vm_hdb.img: this file is an image of the hdb drive of the guest
 # * my_vm.state: this is a dump of the memory (result of virsh save my_vm my_vm.state)
- 
+
 # This script was made to be ran with BackupPC pre/post commands.
 # In the pre-backup phase, you dump everything then, backuppc backups,
 # compress, pools etc... the dumped file. Eventually, when the backup is finished
 # The script is called with the --cleanup flag, which cleanups everything.
- 
+
 # Some examples:
 #
 # Backup the VM named mail01 and devsrv. Also dump the memory.
 # Exclude any virtual disk attached as vdb or hdb and on the fly
 # compress the dumped disks (uses gzip by default)
 # virt-backup.pl --dump --vm=mail01,devsrv --state --exclude=vdb,hdb --compress
- 
+
 # Remove all the files related to mail01 VM in the backup directory
 # virt-backup.pl --cleanup --vm=mail01
- 
+
 # Backup devsrv, use 10G for LVM snapshots (if available), do not dump the memory
 # (the guest will just be paused while we take a snapshot)
 # Keep the lock file present after the dump
 # virt-backup.pl --dump --vm=devsrv --snapsize=10G --keep-lock
- 
+
 # Backup devsrv, and disable LVM snapshots
 # virt-backup.pl --dump --vm=devsrv --no-snapshot
- 
+
 # Backup mail01, and enable debug (verbose output)
 # virt-backup.pl --dump --vm=mail01 --debug
- 
- 
- 
- 
- 
+
+
 ### TODO:
 # - Add snapshot (LVM) support for image based disk ? (should we detect the mount moint, and block device
 #    of the storage or let the user specify it with a --logical ?)
 # - Additionnal check that the vm is available after a restore (via $dom->get_info->{status}, ping ?)
 # - Check if compression utilies are available
 # - Support per vm excludes in one run
- 
- 
- 
+
+
 ### CHANGES
 # * 26/03/2010
 # - Initial packaged version
- 
+
 use XML::Simple;
 use Sys::Virt;
 use Getopt::Long;
 
 # Set umask
 umask(022);
- 
+
 # Some constant
- 
 our %opts = ();
 our @vms = ();
 our @excludes = ();
- 
+
 # Sets some defaults values
 $opts{dump} = 1;
 $opts{backupdir} = '/var/lib/libvirt/backup';
@@ -116,10 +112,11 @@ $opts{nice} = 'nice -n 19';
 $opts{ionice} = 'ionice -c 2 -n 7';
 $opts{livebackup} = 1;
 $opts{wasrunning} = 1;
- 
+
 # get command line arguments
 GetOptions(
     "debug"        => \$opts{debug},
+    "date"         => \$opts{date},
     "keep-lock"    => \$opts{keeplock},
     "state"        => \$opts{state},
     "snapsize=s"   => \$opts{snapsize},
@@ -135,8 +132,7 @@ GetOptions(
     "bs=s"         => \$opts{bs},
     "help"         => \$opts{help}
 );
- 
- 
+
 # Set compression settings
 if ($opts{compress} eq 'lzop'){
     $opts{compext} = ".lzo";
@@ -171,35 +167,41 @@ else{
     $opts{compext} = "";
     $opts{compcmd} = "cat";
 }
- 
+
+# Date option
+my $date = '';
+if ($opts{date}){
+    $date = '_' . `date +%F_%H-%M-%S`;
+    chomp $date;
+}
+
 # Allow comma separated multi-argument
 @vms = split(/,/,join(',',@vms));
 @excludes = split(/,/,join(',',@excludes));
- 
- 
- 
+
+
 # Stop here if we have no vm
 # Or the help flag is present
 if ((!@vms) || ($opts{help})){
     usage();
     exit 1;
 }
- 
+
 if (! -d $opts{backupdir} ){
     print "$opts{backupdir} is not a valid directory\n";
     exit 1;
 }
- 
+
 # Connect to libvirt
 print "\n\nConnecting to libvirt daemon using $opts{connect} as URI\n" if ($opts{debug});
 our $libvirt = Sys::Virt->new( uri => $opts{connect} ) || 
     die "Error connecting to libvirt on URI: $opts{connect}";
- 
- 
- 
+
+
+
 print "\n" if ($opts{debug});
- 
- 
+
+
 foreach our $vm (@vms){
     # Create a new object representing the VM
     print "Checking $vm status\n\n" if ($opts{debug});
@@ -224,33 +226,30 @@ foreach our $vm (@vms){
         exit 1;
     }
 }
- 
- 
- 
- 
+
+
 ############################################################################
 ##############                FUNCTIONS                 ####################
 ############################################################################
- 
- 
+
 sub run_dump{
     # Create a new XML object
     my $xml = new XML::Simple ();
     my $data = $xml->XMLin( $dom->get_xml_description(), forcearray => ['disk'] );
- 
+
     # STop here if the lock file is present, another dump might be running
     die "Another backup is running\n" if ( -e "$backupdir/$vm.lock" );
- 
+
     # Lock VM: Create a lock file so only one dump process can run
     lock_vm();
- 
+
     # Save the XML description
     save_xml();
- 
+
     # Save the VM state if it's running and --state is present
     # (else, just suspend the VM)
     $opts{wasrunning} = 0 unless ($dom->is_active());
- 
+
     if ($opts{wasrunning}){
         if ($opts{state}){
             save_vm_state();
@@ -259,12 +258,12 @@ sub run_dump{
             suspend_vm();
         }
     }
- 
+
     my @disks;
- 
+
     # Create a list of disks used by the VM
     foreach $disk (@{$data->{devices}->{disk}}){
- 
+
         my $source;
         if ($disk->{type} eq 'block'){
             $source = $disk->{source}->{dev};
@@ -275,25 +274,25 @@ sub run_dump{
         else{
             print "\nSkiping $source for vm $vm as it's type is $disk->{type}: " .
                 " and only block and file are supported\n" if ($opts{debug});
-            next;  
+            next;
         }
         my $target = $disk->{target}->{dev};
- 
+
         # Check if the current disk is not excluded
         if (grep { $_ eq "$target" } @excludes){
             print "\nSkiping $source for vm $vm as it's matching one of the excludes: " .
                 join(",",@excludes)."\n\n" if ($opts{debug});
             next;
         }
- 
+
         # If the device is a disk (and not a cdrom) and the source dev exists
         if (($disk->{device} eq 'disk') && (-e $source)){
- 
+
             print "\nAnalysing disk $source connected on $vm as $target\n\n" if ($opts{debug});
- 
+
             # If it's a block device
             if ($disk->{type} eq 'block'){
- 
+
                 my $time = "_".time();
                 # Try to snapshot the source if snapshot is enabled
                 if ( ($opts{snapshot}) && (create_snapshot($source,$time)) ){
@@ -322,16 +321,16 @@ sub run_dump{
             print "Adding $source to the list of disks to be backed up\n" if ($opts{debug});
         }
     }
- 
+
     # Summarize the list of disk to be dumped
     if ($opts{debug}){
         print "\n\nThe following disks will be dumped:\n\n";
         foreach $disk (@disks){
-            print "Source: $disk->{source}\tDest: $backupdir/$vm" . '_' . $disk->{target} .
-                ".img$opts{compext}\n";        
+            print "Source: $disk->{source}\tDest: $backupdir/$vm" . '_' . $disk->{target} . $date .
+                ".img$opts{compext}\n";
         }
     }
- 
+
     # If livebackup is possible (every block devices can be snapshoted)
     # We can restore the VM now, in order to minimize the downtime
     if ($opts{livebackup}){
@@ -345,13 +344,13 @@ sub run_dump{
             }
         }
     }
- 
+
     # Now, it's time to actually dump the disks
     foreach $disk (@disks){
- 
+
         my $source = $disk->{source};
-        my $dest = "$backupdir/$vm" . '_' . $disk->{target} . ".img$opts{compext}";
- 
+        my $dest = "$backupdir/$vm" . '_' . $disk->{target} . $date . ".img$opts{compext}";
+
         print "\nStarting dump of $source to $dest\n\n" if ($opts{debug});
         my $ddcmd = "$opts{ionice} dd if=$source bs=1M | $opts{nice} $opts{compcmd} > $dest 2>/dev/null";
         unless( system("$ddcmd") == 0 ){
@@ -360,7 +359,7 @@ sub run_dump{
         # Remove the snapshot if the current dumped disk is a snapshot
         destroy_snapshot($source) if ($disk->{type} eq 'snapshot');
     }
- 
+
     # If the VM was running before the dump, restore (or resume) it
     if ($opts{wasrunning}){
         if ($opts{state}){
@@ -373,7 +372,7 @@ sub run_dump{
     # And remove the lock file, unless the --keep-lock flag is present
     unlock_vm() unless ($opts{keeplock});
 }
- 
+
 # Remove the dumps
 sub run_cleanup{
     print "\nRemoving backup files\n" if ($opts{debug});
@@ -382,7 +381,7 @@ sub run_cleanup{
     rmdir "$backupdir/";
     print "$cnt file(s) removed\n" if $opts{debug};
 }
- 
+
 sub usage{
     print "usage:\n$0 [--dump|--cleanup] --vm=name[,vm2,vm3] [--debug] [--exclude=hda,hdb] [--compress] ".
         "[--state] [--no-snapshot] [--snapsize=<size>] [--backupdir=/path/to/dir] [--connect=<URI>] ".
@@ -417,10 +416,11 @@ sub usage{
         "The default is /var/lib/libvirt/backup\n\n" .
     "\t--connect=<URI>: URI to connect to libvirt daemon (to suspend, resume, save, restore VM etc...). " .
         "The default is qemu:///system.\n\n" .
+    "\t--date: Add date and time to filename.\n\n" .
     "\t--keep-lock: Let the lock file present. This prevent another " .
         "dump to run while an third party backup software (BackupPC for example) saves the dumped files.\n\n";
 }
- 
+
 # Save a running VM, if it's running
 sub save_vm_state{
     if ($dom->is_active()){
@@ -432,7 +432,7 @@ sub save_vm_state{
         print "$vm is not running, nothing to do\n" if ($opts{debug});
     }
 }
- 
+
 # Restore the state of a VM
 sub restore_vm{
     if (! $dom->is_active()){
@@ -457,7 +457,7 @@ sub restore_vm{
             if ($opts{debug});
     }
 }
- 
+
 # Suspend a VM
 sub suspend_vm(){
     if ($dom->is_active()){
@@ -469,7 +469,7 @@ sub suspend_vm(){
         print "$vm is not running, nothing to do\n" if ($opts{debug});
     }
 }
- 
+
 # Resume a VM if it's paused
 sub resume_vm(){
     if ($dom->get_info->{state} == Sys::Virt::Domain::STATE_PAUSED){
@@ -481,7 +481,7 @@ sub resume_vm(){
         print "$vm is not suspended, nothing to do\n" if ($opts{debug});
     }
 }
- 
+
 # Dump the domain description as XML
 sub save_xml{
     print "\nSaving XML description for $vm to $backupdir/$vm.xml\n" if ($opts{debug});
@@ -489,7 +489,7 @@ sub save_xml{
     print XML $dom->get_xml_description();
     close XML;
 }
- 
+
 # Create an LVM snapshot
 # Pass the original logical volume and the suffix
 # to be added to the snapshot name as arguments
@@ -504,7 +504,7 @@ sub create_snapshot{
     }
     return $ret;
 }
- 
+
 # Remove an LVM snapshot
 sub destroy_snapshot{
     my $ret = 0;
@@ -515,7 +515,7 @@ sub destroy_snapshot{
     }
     return $ret;
 }
- 
+
 # Lock a VM backup dir
 # Just creates an empty lock file
 sub lock_vm{
@@ -524,12 +524,10 @@ sub lock_vm{
     print LOCK "";
     close LOCK;
 }
- 
+
 # Unlock the VM backup dir
 # Just removes the lock file
 sub unlock_vm{
     print "Removing lock file for $vm\n\n" if $opts{debug};
     unlink <$backupdir/$vm.lock>;
 }
-
-
