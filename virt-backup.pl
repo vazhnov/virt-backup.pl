@@ -110,6 +110,7 @@
 use XML::Simple;
 use Sys::Virt;
 use Getopt::Long;
+use File::Which qw(which);
 
 # Set umask
 umask(022);
@@ -143,9 +144,9 @@ $opts{connect} = "qemu:///system";
 # Compression used with the dump action (the compression is done on the fly)
 $opts{compress} = 'none';
 # lvcreate path
-$opts{lvcreate} = '/usr/sbin/lvcreate -c 512';
+$opts{lvcreate} = which('lvcreate') . ' -c 512' || die "Can't find lvcreate\n";
 # lvremove path
-$opts{lvremove} = '/usr/sbin/lvremove';
+$opts{lvremove} = which('lvremove') || die "Can't find lvremove\n";
 # chunkfs path
 $opts{chunkfs} = '/usr/bin/chunkfs';
 # Size of chunks to use with chunkfs or or blocks with dd in bytes (default to 256kB)
@@ -159,10 +160,11 @@ $opts{ionice} = 'ionice -c 2 -n 7';
 
 $opts{livebackup} = 1;
 $opts{wasrunning} = 1;
- 
+
 # get command line arguments
 GetOptions(
     "debug"        => \$opts{debug},
+    "date"         => \$opts{date},
     "keep-lock"    => \$opts{keeplock},
     "state"        => \$opts{state},
     "snapsize=s"   => \$opts{snapsize},
@@ -215,7 +217,14 @@ else{
     $opts{compext} = "";
     $opts{compcmd} = "cat";
 }
- 
+
+# Date option
+my $date = '';
+if ($opts{date}){
+    $date = '_' . `date +%F_%H-%M-%S`;
+    chomp $date;
+}
+
 # Allow comma separated multi-argument
 @vms = split(/,/,join(',',@vms));
 @excludes = split(/,/,join(',',@excludes));
@@ -231,21 +240,19 @@ if ((!@vms) || ($opts{help})){
     usage();
     exit 1;
 }
- 
+
 if (! -d $opts{backupdir} ){
     print "$opts{backupdir} is not a valid directory\n";
     exit 1;
 }
- 
+
 # Connect to libvirt
 print "\n\nConnecting to libvirt daemon using $opts{connect} as URI\n" if ($opts{debug});
-our $libvirt = Sys::Virt->new( uri => $opts{connect} ) || 
+our $libvirt = Sys::Virt->new( uri => $opts{connect} ) ||
     die "Error connecting to libvirt on URI: $opts{connect}";
- 
- 
- 
+
 print "\n" if ($opts{debug});
- 
+
 foreach our $vm (@vms){
     # Create a new object representing the VM
     print "Checking $vm status\n\n" if ($opts{debug});
@@ -279,30 +286,28 @@ foreach our $vm (@vms){
 }
 
 
-
 ############################################################################
 ##############                FUNCTIONS                 ####################
 ############################################################################
-
 
 sub prepare_backup{
     # Create a new XML object
     my $xml = new XML::Simple ();
     my $data = $xml->XMLin( $dom->get_xml_description(), forcearray => ['disk'] );
- 
+
     # STop here if the lock file is present, another dump might be running
     die "Another backup is running\n" if ( -e "$backupdir.meta/$vm.lock" );
- 
+
     # Lock VM: Create a lock file so only one dump process can run
     lock_vm();
- 
+
     # Save the XML description
     save_xml();
- 
+
     # Save the VM state if it's running and --state is present
     # (else, just suspend the VM)
     $opts{wasrunning} = 0 unless ($dom->is_active());
- 
+
     if ($opts{wasrunning}){
         if ($opts{state}){
             save_vm_state();
@@ -311,10 +316,10 @@ sub prepare_backup{
             suspend_vm();
         }
     }
- 
+
     # Create a list of disks used by the VM
     foreach $disk (@{$data->{devices}->{disk}}){
- 
+
         my $source;
         if ($disk->{type} eq 'block'){
             $source = $disk->{source}->{dev};
@@ -325,25 +330,25 @@ sub prepare_backup{
         else{
             print "\nSkiping $source for vm $vm as it's type is $disk->{type}: " .
                 " and only block and file are supported\n" if ($opts{debug});
-            next;  
+            next;
         }
         my $target = $disk->{target}->{dev};
- 
+
         # Check if the current disk is not excluded
         if (grep { $_ eq "$target" } @excludes){
             print "\nSkiping $source for vm $vm as it's matching one of the excludes: " .
                 join(",",@excludes)."\n\n" if ($opts{debug});
             next;
         }
- 
+
         # If the device is a disk (and not a cdrom) and the source dev exists
         if (($disk->{device} eq 'disk') && (-e $source)){
- 
+
             print "\nAnalysing disk $source connected on $vm as $target\n\n" if ($opts{debug});
- 
+
             # If it's a block device
             if ($disk->{type} eq 'block'){
- 
+
                 my $time = "_".time();
                 # Try to snapshot the source if snapshot is enabled
                 if ( ($opts{snapshot}) && (create_snapshot($source,$time)) ){
@@ -372,24 +377,24 @@ sub prepare_backup{
             print "Adding $source to the list of disks to be backed up\n" if ($opts{debug});
         }
     }
- 
+
     # Summarize the list of disk to be dumped
     if ($opts{debug}){
         if ($opts{action} eq 'dump'){
             print "\n\nThe following disks will be dumped:\n\n";
             foreach $disk (@disks){
-                print "Source: $disk->{source}\tDest: $backupdir/$vm" . '_' . $disk->{target} .
+                print "Source: $disk->{source}\tDest: $backupdir/$vm" . '_' . $disk->{target} . $date .
                     ".img$opts{compext}\n";
             }
         }
         elsif($opts{action} eq 'chunkmount'){
             print "\n\nThe following disks will be mounted as chunks:\n\n";
             foreach $disk (@disks){
-                print "Source: $disk->{source}\tDest: $backupdir/$vm" . '_' . $disk->{target};
+                print "Source: $disk->{source}\tDest: $backupdir/$vm" . '_' . $disk->{target} . $date;
             }
         }
     }
- 
+
     # If livebackup is possible (every block devices can be snapshoted)
     # We can restore the VM now, in order to minimize the downtime
     if ($opts{livebackup}){
@@ -409,13 +414,13 @@ sub run_dump{
 
     # Pause VM, dump state, take snapshots etc..
     prepare_backup();
- 
+
     # Now, it's time to actually dump the disks
     foreach $disk (@disks){
- 
+
         my $source = $disk->{source};
-        my $dest = "$backupdir/$vm" . '_' . $disk->{target} . ".img$opts{compext}";
- 
+        my $dest = "$backupdir/$vm" . '_' . $disk->{target} . $date . ".img$opts{compext}";
+
         print "\nStarting dump of $source to $dest\n\n" if ($opts{debug});
         my $ddcmd = "$opts{ionice} dd if=$source bs=$opts{blocksize} | $opts{nice} $opts{compcmd} > $dest 2>/dev/null";
         unless( system("$ddcmd") == 0 ){
@@ -424,7 +429,7 @@ sub run_dump{
         # Remove the snapshot if the current dumped disk is a snapshot
         destroy_snapshot($source) if ($disk->{type} eq 'snapshot');
     }
- 
+
     # If the VM was running before the dump, restore (or resume) it
     if ($opts{wasrunning}){
         if ($opts{state}){
@@ -444,7 +449,7 @@ sub run_chunkmount{
 
     # Now, lets mount guest images with chunkfs
     foreach $disk (@disks){
- 
+
         my $source = $disk->{source};
         my $dest = "$backupdir/$vm" . '_' . $disk->{target};
         mkdir $dest || die $!;
@@ -507,7 +512,7 @@ sub run_cleanup{
     print "$cnt file(s) removed\n$snap LVM snapshots removed\n$meta metadata files removed\n\n" if $opts{debug};
 }
 
- 
+
 sub usage{
     print "usage:\n$0 --action=[dump|cleanup|chunkmount|unlock] --vm=vm1[,vm2,vm3] [--debug] [--exclude=hda,hdb] [--compress] ".
         "[--state] [--no-snapshot] [--snapsize=<size>] [--backupdir=/path/to/dir] [--connect=<URI>] ".
@@ -545,10 +550,11 @@ sub usage{
         "The default is /var/lib/libvirt/backup\n\n" .
     "\t--connect=<URI>: URI to connect to libvirt daemon (to suspend, resume, save, restore VM etc...). " .
         "The default is qemu:///system.\n\n" .
+    "\t--date: Add date and time to filename.\n\n" .
     "\t--keep-lock: Let the lock file present. This prevent another " .
         "dump to run while an third party backup software (BackupPC for example) saves the dumped files.\n\n";
 }
- 
+
 # Save a running VM, if it's running
 sub save_vm_state{
     if ($dom->is_active()){
@@ -560,7 +566,7 @@ sub save_vm_state{
         print "$vm is not running, nothing to do\n" if ($opts{debug});
     }
 }
- 
+
 # Restore the state of a VM
 sub restore_vm{
     if (! $dom->is_active()){
@@ -573,7 +579,7 @@ sub restore_vm{
                 sleep(5);
                 $i = $i+5;
             }
-            print "Timeout while trying to restore $vm, aborting\n" 
+            print "Timeout while trying to restore $vm, aborting\n"
                 if (($i > 120) && ($opts{debug}));
         }
         else{
@@ -585,7 +591,7 @@ sub restore_vm{
             if ($opts{debug});
     }
 }
- 
+
 # Suspend a VM
 sub suspend_vm(){
     if ($dom->is_active()){
@@ -597,7 +603,7 @@ sub suspend_vm(){
         print "$vm is not running, nothing to do\n" if ($opts{debug});
     }
 }
- 
+
 # Resume a VM if it's paused
 sub resume_vm(){
     if ($dom->get_info->{state} == Sys::Virt::Domain::STATE_PAUSED){
@@ -609,7 +615,7 @@ sub resume_vm(){
         print "$vm is not suspended, nothing to do\n" if ($opts{debug});
     }
 }
- 
+
 # Dump the domain description as XML
 sub save_xml{
     print "\nSaving XML description for $vm to $backupdir/$vm.xml\n" if ($opts{debug});
@@ -617,7 +623,7 @@ sub save_xml{
     print XML $dom->get_xml_description();
     close XML;
 }
- 
+
 # Create an LVM snapshot
 # Pass the original logical volume and the suffix
 # to be added to the snapshot name as arguments
@@ -635,7 +641,7 @@ sub create_snapshot{
     }
     return $ret;
 }
- 
+
 # Remove an LVM snapshot
 sub destroy_snapshot{
     my $ret = 0;
@@ -646,7 +652,7 @@ sub destroy_snapshot{
     }
     return $ret;
 }
- 
+
 # Lock a VM backup dir
 # Just creates an empty lock file
 sub lock_vm{
@@ -655,7 +661,7 @@ sub lock_vm{
     print LOCK "";
     close LOCK;
 }
- 
+
 # Unlock the VM backup dir
 # Just removes the lock file
 sub unlock_vm{
