@@ -1,6 +1,10 @@
 Copied from http://repo.firewall-services.com/misc/virt/virt-backup.pl
 This version on https://github.com/vazhnov/virt-backup.pl
 
+# Note that this script is old
+# You can find the latest version here
+# http://gitweb.firewall-services.com/?p=virt-backup;a=blob_plain;f=virt-backup;hb=HEAD
+
 # AUTHOR
 #   Daniel Berteaud <daniel@firewall-services.com>
 #
