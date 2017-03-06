@@ -208,6 +208,10 @@ elsif ($opts{compress} eq 'plzip'){
     $opts{compext} = ".lz";
     $opts{compcmd} = "plzip -c";
 }
+elsif ($opts{compress} eq 'pigz'){
+    $opts{compext} = ".gz";
+    $opts{compcmd} = "pigz -c";
+}
 # Default is gzip
 elsif (($opts{compress} eq 'gzip') || ($opts{compress} eq '')) {
     $opts{compext} = ".gz";
