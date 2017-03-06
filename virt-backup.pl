@@ -328,7 +328,7 @@ sub prepare_backup{
             $source = $disk->{source}->{file};
         }
         else{
-            print "\nSkiping $source for vm $vm as it's type is $disk->{type}: " .
+            print "\nSkipping $source for vm $vm as its type is $disk->{type}: " .
                 " and only block and file are supported\n" if ($opts{debug});
             next;
         }
@@ -336,7 +336,7 @@ sub prepare_backup{
 
         # Check if the current disk is not excluded
         if (grep { $_ eq "$target" } @excludes){
-            print "\nSkiping $source for vm $vm as it's matching one of the excludes: " .
+            print "\nSkipping $source for vm $vm as it's matching one of the excludes: " .
                 join(",",@excludes)."\n\n" if ($opts{debug});
             next;
         }
@@ -360,7 +360,7 @@ sub prepare_backup{
                 # Snapshot failed, or disabled: disabling live backups
                 else{
                     if ($opts{snapshot}){
-                        print "Snapshoting $source has failed (not managed by LVM, or already a snapshot ?)" .
+                        print "Snapshotting $source has failed (not managed by LVM, or already a snapshot ?)" .
                             ", live backup will be disabled\n" if ($opts{debug}) ;
                     }
                     else{
@@ -378,7 +378,7 @@ sub prepare_backup{
         }
     }
 
-    # Summarize the list of disk to be dumped
+    # Summarize the list of disks to be dumped
     if ($opts{debug}){
         if ($opts{action} eq 'dump'){
             print "\n\nThe following disks will be dumped:\n\n";
@@ -395,8 +395,8 @@ sub prepare_backup{
         }
     }
 
-    # If livebackup is possible (every block devices can be snapshoted)
-    # We can restore the VM now, in order to minimize the downtime
+    # If livebackup is possible (every block device can be snapshotted)
+    # we can restore the VM now, in order to minimize the downtime
     if ($opts{livebackup}){
         print "\nWe can run a live backup\n" if ($opts{debug});
         if ($opts{wasrunning}){
@@ -415,7 +415,7 @@ sub run_dump{
     # Pause VM, dump state, take snapshots etc..
     prepare_backup();
 
-    # Now, it's time to actually dump the disks
+    # Now it's time to actually dump the disks
     foreach $disk (@disks){
 
         my $source = $disk->{source};
@@ -472,7 +472,7 @@ sub run_cleanup{
     if (-e "$backupdir/$vm.state"){
         restore_vm();
     }
-    # Else, trys to resume it
+    # Else, try to resume it
     else{
         resume_vm();
     }
@@ -495,11 +495,11 @@ sub run_cleanup{
     $cnt = unlink <$backupdir/*>;
     if (open SNAPLIST, "<$backupdir.meta/snapshots"){
         foreach (<SNAPLIST>){
-            # Destroy snapshot listed here is they exists
-            # and only if the end with _ and 10 digits
+            # Destroy snapshot listed here if it exists
+            # and only if its name ends with _ and 10 digits
             chomp;
             if ((-e $_) && ($_ =~ m/_\d{10}$/)){
-               print "Found $_ in snapshot list file, will try to remove it\n" if ($opts{debug});
+               print "Found $_ in snapshot list, will try to remove it\n" if ($opts{debug});
                destroy_snapshot($_);
                $snap++;
             }
@@ -530,29 +530,29 @@ sub usage{
     "\t--state: Cleaner way to take backups. If this flag is present, the script will save the current state of " .
         "the VM (if running) instead of just suspending it. With this you should be able to restore the VM at " .
         "the exact state it was when the backup started. The reason this flag is optional is that some guests " .
-        "crashes after the restoration, especially when using the kvm-clock. Test this functionnality with" .
-        "your environnement before using this flag on production\n\n" .
+        "crash after the restoration, especially when using the kvm-clock. Test this functionality with" .
+        "your environnement before using this flag in production\n\n" .
     "\t--no-snapshot: Do not attempt to use LVM snapshots. If not present, the script will try to take a snapshot " .
-        "of each disk of type 'block'. If all disk can be snapshoted, the VM is resumed, or restored (depending " .
-        "on the --state flag) immediatly after the snapshots have been taken, resulting in almost no downtime. " .
+        "of each disk of type 'block'. If all disks can be snapshotted, the VM is resumed, or restored (depending " .
+        "on the --state flag) immediately after the snapshots have been taken, resulting in almost no downtime. " .
         "This is called a \"live backup\" in this script" .
-        "If at least one disk cannot be snapshoted, the VM is suspended (or stoped) for the time the disks are " .
-        "dumped in the backup dir. That's why you should use a fast support for the backup dir (fast disks, RAID0 " .
+        "If at least one disk cannot be snapshotted, the VM is suspended (or stopped) for the time the disks are " .
+        "dumped into the backup dir. That's why you should use a fast support for the backup dir (fast disks, RAID0 " .
         "or RAID10)\n\n" .
     "\t--snapsize=<snapsize>: The amount of space to use for snapshots. Use the same format as -L option of lvcreate. " .
         "eg: --snapsize=15G. Default is 5G\n\n" .
-    "\t--compress[=[gzip|bzip2|pbzip2|lzop|xz|lzip|plzip]]: On the fly compress the disks images during the dump. If you " .
+    "\t--compress[=[gzip|bzip2|pbzip2|lzop|xz|lzip|plzip|pigz]]: On the fly compress the disks images during the dump. If you " .
         "don't specify a compression algo, gzip will be used.\n\n" .
     "\t--exclude=hda,hdb: Prevent the disks listed from being dumped. The names are from the VM perspective, as " .
-        "configured in livirt as the target element. It can be usefull for example if you want to dump the system " .
-        "disk of a VM, but not the data one which can be backed up separatly, at the files level.\n\n" .
-    "\t--backupdir=/path/to/backup: Use an alternate backup dir. The directory must exists and be writable. " .
+        "configured in livirt as the target element. It can be useful for example if you want to dump the system " .
+        "disk of a VM, but not the data one which can be backed up separately, at the files level.\n\n" .
+    "\t--backupdir=/path/to/backup: Use an alternate backup dir. The directory must exist and be writable. " .
         "The default is /var/lib/libvirt/backup\n\n" .
     "\t--connect=<URI>: URI to connect to libvirt daemon (to suspend, resume, save, restore VM etc...). " .
         "The default is qemu:///system.\n\n" .
     "\t--date: Add date and time to filename.\n\n" .
-    "\t--keep-lock: Let the lock file present. This prevent another " .
-        "dump to run while an third party backup software (BackupPC for example) saves the dumped files.\n\n";
+    "\t--keep-lock: Let the lock file stay present. This prevents another " .
+        "dump to run while a third party backup software (BackupPC for example) saves the dumped files.\n\n";
 }
 
 # Save a running VM, if it's running
