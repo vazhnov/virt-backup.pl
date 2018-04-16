@@ -212,6 +212,10 @@ elsif ($opts{compress} eq 'pigz'){
     $opts{compext} = ".gz";
     $opts{compcmd} = "pigz -c";
 }
+elsif ($opts{compress} eq 'zstd'){
+    $opts{compext} = ".zst";
+    $opts{compcmd} = "zstd --rm";
+}
 # Default is gzip
 elsif (($opts{compress} eq 'gzip') || ($opts{compress} eq '')) {
     $opts{compext} = ".gz";
@@ -545,7 +549,7 @@ sub usage{
         "or RAID10)\n\n" .
     "\t--snapsize=<snapsize>: The amount of space to use for snapshots. Use the same format as -L option of lvcreate. " .
         "eg: --snapsize=15G. Default is 5G\n\n" .
-    "\t--compress[=[gzip|bzip2|pbzip2|lzop|xz|lzip|plzip|pigz]]: On the fly compress the disks images during the dump. If you " .
+    "\t--compress[=[gzip|bzip2|pbzip2|lzop|xz|lzip|plzip|pigz|zstd]]: On the fly compress the disks images during the dump. If you " .
         "don't specify a compression algo, gzip will be used.\n\n" .
     "\t--exclude=hda,hdb: Prevent the disks listed from being dumped. The names are from the VM perspective, as " .
         "configured in livirt as the target element. It can be useful for example if you want to dump the system " .
